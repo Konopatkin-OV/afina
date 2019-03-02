@@ -17,7 +17,8 @@ namespace Backend {
  */
 class SimpleLRU : public Afina::Storage {
 public:
-    SimpleLRU(size_t max_size = 1024) : _max_size(max_size) {}
+    SimpleLRU(size_t max_size = 1024) : _max_size(max_size), _cur_size(0), 
+                                        _lru_head(nullptr), _lru_tail(nullptr), _lru_index() {}
 
     ~SimpleLRU() {
         _lru_index.clear();
@@ -62,15 +63,8 @@ private:
     std::unique_ptr<lru_node> _lru_head;
     lru_node* _lru_tail;
 
-    // because there is no default std::less for std::reference_wrapper, this is necessary
-    class _key_cmp {
-    public:
-        bool operator()(const std::reference_wrapper<const std::string> &, 
-                        const std::reference_wrapper<const std::string> &);
-    };
-
     // Index of nodes from list above, allows fast random access to elements by lru_node#key
-    std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>, _key_cmp> _lru_index;
+    std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>, std::less<std::string>> _lru_index;
 
     // Insert new node into the list
     bool InsertHead (const std::string &key, const std::string &value);
