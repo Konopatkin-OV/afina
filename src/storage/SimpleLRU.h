@@ -17,8 +17,8 @@ namespace Backend {
  */
 class SimpleLRU : public Afina::Storage {
 public:
-    SimpleLRU(size_t max_size = 1024) : _max_size(max_size), _cur_size(0), 
-                                        _lru_head(nullptr), _lru_tail(nullptr), _lru_index() {}
+    SimpleLRU(size_t max_size = 1024)
+        : _max_size(max_size), _cur_size(0), _lru_head(nullptr), _lru_tail(nullptr), _lru_index() {}
 
     ~SimpleLRU() {
         _lru_index.clear();
@@ -51,7 +51,7 @@ private:
     using lru_node = struct lru_node {
         std::string key;
         std::string value;
-        lru_node* prev;
+        lru_node *prev;
         std::unique_ptr<lru_node> next;
     };
 
@@ -67,16 +67,17 @@ private:
     //
     // List owns all nodes
     std::unique_ptr<lru_node> _lru_head;
-    lru_node* _lru_tail;
+    lru_node *_lru_tail;
 
     // Index of nodes from list above, allows fast random access to elements by lru_node#key
-    std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>, std::less<std::string>> _lru_index;
+    std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>, std::less<std::string>>
+        _lru_index;
 
     // Insert new node into the list
-    bool InsertHead (const std::string &key, const std::string &value);
+    bool InsertHead(const std::string &key, const std::string &value);
 
     // Remove tail node from the list
-    void RemoveTail ();
+    void RemoveTail();
 
     // Moves node to start of the list
     void MoveToHead(lru_node *node);
