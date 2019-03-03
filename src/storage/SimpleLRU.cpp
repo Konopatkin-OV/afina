@@ -44,13 +44,13 @@ void SimpleLRU::RemoveTail() {
     if (this->_lru_tail->prev == nullptr) {
         this->_cur_size = 0;
         this->_lru_tail = nullptr;
-        this->_lru_head.reset(nullptr);
+        this->_lru_head.reset();
         return;
     }
 
     this->_cur_size -= this->_lru_tail->key.size() + this->_lru_tail->value.size();
     this->_lru_tail = this->_lru_tail->prev;
-    this->_lru_tail->next.reset(nullptr);
+    this->_lru_tail->next.reset();
     return;
 }
 
@@ -64,7 +64,7 @@ void SimpleLRU::MoveToHead(lru_node *node) {
         this->_lru_tail = node->prev;
         node->next = std::move(this->_lru_head);
         this->_lru_head = std::move(node->prev->next);
-        this->_lru_tail->next.reset(nullptr);
+        this->_lru_tail->next.reset();
         node->prev = nullptr;
         return;
     }
@@ -123,26 +123,25 @@ bool SimpleLRU::Delete(const std::string &key) {
 
     // if elem not in cache
     if (found != this->_lru_index.end()) {
-        this->_lru_index.erase(found);
-
         lru_node *node = &(found->second.get());
+
         this->_cur_size -= node->key.size() + node->value.size();
 
-        // if it is head
         if (node->prev == nullptr) {
+            // if it is head
             this->_lru_head = std::move(node->next);
             this->_lru_head->prev = nullptr;
-            return true;
-        }
-
-        // if it is tail
-        if (node == this->_lru_tail) {
+        } else if (node == this->_lru_tail) {
+            // if it is tail
+            this->_lru_tail = node->prev;
+            this->_lru_tail->next.reset();
+        } else {
+            node->next->prev = node->prev;
             node->prev->next = std::move(node->next);
-            return true;
         }
 
-        node->next->prev = node->prev;
-        node->prev->next = std::move(node->next);
+        this->_lru_index.erase(found);
+
         return true;
     } else {
         return false;
