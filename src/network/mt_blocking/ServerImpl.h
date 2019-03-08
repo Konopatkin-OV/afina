@@ -61,6 +61,10 @@ private:
     int _num_workers;
     std::mutex _work_mutex;
     std::condition_variable _all_finished;
+
+    // max possible numbers of workers and acceptors
+    int _max_workers;
+    int _max_acceptors;
 };
 
 } // namespace MTblocking

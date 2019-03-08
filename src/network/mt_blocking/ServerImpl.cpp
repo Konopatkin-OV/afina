@@ -72,8 +72,11 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
-    running.store(true);
     _num_workers = 0;
+    _max_workers = n_workers;
+    _max_acceptors = n_accept;
+
+    running.store(true);
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
@@ -144,10 +147,18 @@ void ServerImpl::OnRun() {
         {
             {
                 std::unique_lock<std::mutex> _lock(_work_mutex);
-                _num_workers += 1;
+                if (_num_workers == _max_workers) {
+                    static const std::string msg = "Connection limit exceeded\r\n";
+                    if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
+                        _logger->error("Failed to write response to client: {}", strerror(errno));
+                    }
+                    close(client_socket);
+                } else {
+                    _num_workers += 1;
+                    std::thread worker_thread(&ServerImpl::OnCommand, this, client_socket);
+                    worker_thread.detach();
+                }
             }
-            std::thread worker_thread(&ServerImpl::OnCommand, this, client_socket);
-            worker_thread.detach();
         }
     }
 
@@ -156,45 +167,97 @@ void ServerImpl::OnRun() {
 }
 
 void ServerImpl::OnCommand (int client_socket) {
-    const size_t buf_size = 1024;
+    const ssize_t buf_size = 1024;
     char buf[buf_size];
-    size_t buf_read, buf_left = 0, buf_parsed;
+    ssize_t buf_read;
+    size_t buf_left = 0, buf_parsed = 0;
+    bool connected = true;
 
-    Protocol::Parser parser;
-    parser.Reset();
-    bool parsed = false;
-
-    // reading from socket until command is parsed
-    while (!parsed) {
-        buf_read = recv(client_socket, buf + buf_left, buf_size - buf_left, 0);
-        buf_left += buf_read;
-        parsed = parser.Parse(buf, buf_left, buf_parsed);
-
+    // some useful lambda, removes parsed characters from buffer
+    auto shift_buf = [&]() {
         if (buf_parsed > 0) {
-            strncpy(buf, buf + buf_parsed, buf_left - buf_parsed);
+            // strncpy and memcpy get undefined behaviour on overlapped ranges
+            // memcpy(buf, buf + buf_parsed, buf_left - buf_parsed);
+            char *to = buf, *from = buf + buf_parsed;
+            for (int i = 0; i < buf_left - buf_parsed; ++to, ++from, ++i) {
+                *to = *from;
+            }
             buf_left -= buf_parsed;
         }
-    }
+    };
+    ///////////////////////////
 
-    std::unique_ptr<Execute::Command> command(parser.Build(buf_parsed));
+    Protocol::Parser parser;
 
-    // check if command args fit into buffer
-    if (buf_parsed + buf_left + 1 <= buf_size) {
-        // reading command args from socket
-        while (buf_left < buf_parsed) {
-            buf_left += recv(client_socket, buf + buf_left, buf_parsed - buf_left, 0);
+    while (connected && running.load()) {
+        _logger->error("BUF_LEFT = {} !", buf_left);
+        parser.Reset();
+        bool parsed = false;
+/*
+        if (buf_left > 0) {
+            parsed = parser.Parse(buf, buf_left, buf_parsed);
+            shift_buf();
         }
-        buf[buf_left] = '\0';
+*/
+        // reading from socket until command is parsed
+        while (!parsed) {
+            buf_read = recv(client_socket, buf + buf_left, buf_size - buf_left, 0);
+            // if something went wrong - terminate
+            if (buf_read <= 0) {
+                connected = false;
+                break;
+            }
+
+            buf_left += buf_read;
+
+            parsed = parser.Parse(buf, buf_left, buf_parsed);
+            shift_buf();
+        }
+
+        if (!connected) {
+            break;
+        }
+
+        std::unique_ptr<Execute::Command> command(parser.Build(buf_parsed));
+
+        // check if command args fit into buffer
+        // should not happen because parser must read them before returning body_size?
+        if (buf_left + buf_parsed + 1 > buf_size) {
+            static const std::string msg = "Command arguments are too long\r\n";
+            if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
+                _logger->error("Failed to write response to client: {}", strerror(errno));
+            }
+            break;
+        }
+
+        // reading command args from socket
+        // also should not happen
+        while (buf_left < buf_parsed) {
+            buf_read = recv(client_socket, buf + buf_left, buf_parsed - buf_left, 0);
+            // if something went wrong - terminate
+            if (buf_read <= 0) {
+                connected = false;
+                break;
+            }
+            buf_left += buf_read;
+        }
+
+        if (!connected) {
+            break;
+        }
+        ////////////////////////////////////////////////////////////////////////////////
+
+        char tmp = '\0';
+        std::swap(tmp, buf[buf_parsed]);
 
         std::string msg;
         command->Execute(*pStorage, buf, msg);
         msg.append("\r\n");
 
-        if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-            _logger->error("Failed to write response to client: {}", strerror(errno));
-        }
-    } else {
-        static const std::string msg = "Command arguments are too long";
+        buf[buf_parsed] = tmp;
+
+        shift_buf();
+
         if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
             _logger->error("Failed to write response to client: {}", strerror(errno));
         }
@@ -204,8 +267,9 @@ void ServerImpl::OnCommand (int client_socket) {
 
     // for debugging
     sleep(5);
-    _logger->debug("Work finished");
+    _logger->error("Work finished");
 
+    // inform server
     {
         std::unique_lock<std::mutex> _lock(_work_mutex);
         _num_workers -= 1;
