@@ -109,7 +109,7 @@ bool SimpleLRU::PutIfAbsent(const std::string &key, const std::string &value) {
 bool SimpleLRU::Set(const std::string &key, const std::string &value) {
     auto found = this->_lru_index.find(key);
 
-    // if elem not in cache
+    // if elem in cache
     if (found != this->_lru_index.end()) {
         found->second.get().value = value;
         this->MoveToHead(&(found->second.get()));
@@ -123,7 +123,7 @@ bool SimpleLRU::Set(const std::string &key, const std::string &value) {
 bool SimpleLRU::Delete(const std::string &key) {
     auto found = this->_lru_index.find(key);
 
-    // if elem not in cache
+    // if elem in cache
     if (found != this->_lru_index.end()) {
         lru_node *node = &(found->second.get());
 
@@ -154,7 +154,7 @@ bool SimpleLRU::Delete(const std::string &key) {
 bool SimpleLRU::Get(const std::string &key, std::string &value) {
     auto found = this->_lru_index.find(key);
 
-    // if elem not in cache
+    // if elem in cache
     if (found != this->_lru_index.end()) {
         value = found->second.get().value;
         this->MoveToHead(&(found->second.get()));
