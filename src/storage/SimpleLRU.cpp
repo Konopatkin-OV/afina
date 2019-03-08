@@ -66,6 +66,7 @@ void SimpleLRU::MoveToHead(lru_node *node) {
         this->_lru_head = std::move(node->prev->next);
         this->_lru_tail->next.reset();
         node->prev = nullptr;
+        node->next->prev = node;
         return;
     }
 
@@ -75,6 +76,7 @@ void SimpleLRU::MoveToHead(lru_node *node) {
     node->prev->next = std::move(node->next);
     node->next = std::move(tmp);
     node->prev = nullptr;
+    node->next->prev = node;
 }
 
 // See MapBasedGlobalLockImpl.h
@@ -149,12 +151,13 @@ bool SimpleLRU::Delete(const std::string &key) {
 }
 
 // See MapBasedGlobalLockImpl.h
-bool SimpleLRU::Get(const std::string &key, std::string &value) const {
+bool SimpleLRU::Get(const std::string &key, std::string &value) {
     auto found = this->_lru_index.find(key);
 
     // if elem not in cache
     if (found != this->_lru_index.end()) {
         value = found->second.get().value;
+        this->MoveToHead(&(found->second.get()));
         return true;
     } else {
         return false;
