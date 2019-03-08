@@ -73,12 +73,20 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
+    _num_workers = 0;
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
 // See Server.h
 void ServerImpl::Stop() {
     running.store(false);
+
+    //waiting for all workers to finish
+    std::unique_lock<std::mutex> _lock(_work_mutex);
+    while (_num_workers > 0) {
+        _all_finished.wait(_lock);
+    }
+
     shutdown(_server_socket, SHUT_RDWR);
 }
 
@@ -97,7 +105,7 @@ void ServerImpl::OnRun() {
     // - arg_remains: how many bytes to read from stream to get command argument
     // - argument_for_command: buffer stores argument
     std::size_t arg_remains;
-    Protocol::Parser parser;
+
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
     while (running.load()) {
@@ -132,18 +140,77 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-        // TODO: Start new thread and process data from/to connection
+        // Start new thread and process data from/to connection
         {
-            static const std::string msg = "TODO: start new thread and process memcached protocol instead";
-            if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                _logger->error("Failed to write response to client: {}", strerror(errno));
+            {
+                std::unique_lock<std::mutex> _lock(_work_mutex);
+                _num_workers += 1;
             }
-            close(client_socket);
+            std::thread worker_thread(&ServerImpl::OnCommand, this, client_socket);
+            worker_thread.detach();
         }
     }
 
     // Cleanup on exit...
     _logger->warn("Network stopped");
+}
+
+void ServerImpl::OnCommand (int client_socket) {
+    const size_t buf_size = 1024;
+    char buf[buf_size];
+    size_t buf_read, buf_left = 0, buf_parsed;
+
+    Protocol::Parser parser;
+    parser.Reset();
+    bool parsed = false;
+
+    // reading from socket until command is parsed
+    while (!parsed) {
+        buf_read = recv(client_socket, buf + buf_left, buf_size - buf_left, 0);
+        buf_left += buf_read;
+        parsed = parser.Parse(buf, buf_left, buf_parsed);
+
+        if (buf_parsed > 0) {
+            strncpy(buf, buf + buf_parsed, buf_left - buf_parsed);
+            buf_left -= buf_parsed;
+        }
+    }
+
+    std::unique_ptr<Execute::Command> command(parser.Build(buf_parsed));
+
+    // check if command args fit into buffer
+    if (buf_parsed + buf_left + 1 <= buf_size) {
+        // reading command args from socket
+        while (buf_left < buf_parsed) {
+            buf_left += recv(client_socket, buf + buf_left, buf_parsed - buf_left, 0);
+        }
+        buf[buf_left] = '\0';
+
+        std::string msg;
+        command->Execute(*pStorage, buf, msg);
+        msg.append("\r\n");
+
+        if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
+            _logger->error("Failed to write response to client: {}", strerror(errno));
+        }
+    } else {
+        static const std::string msg = "Command arguments are too long";
+        if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
+            _logger->error("Failed to write response to client: {}", strerror(errno));
+        }
+    }
+
+    close(client_socket);
+
+    // for debugging
+    sleep(5);
+    _logger->debug("Work finished");
+
+    {
+        std::unique_lock<std::mutex> _lock(_work_mutex);
+        _num_workers -= 1;
+        _all_finished.notify_one();
+    }
 }
 
 } // namespace MTblocking
