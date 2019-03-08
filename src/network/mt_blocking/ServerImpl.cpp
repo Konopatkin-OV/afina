@@ -238,8 +238,8 @@ void ServerImpl::OnCommand (int client_socket) {
                 std::string msg;
                 command->Execute(*pStorage, buf, msg);
 
-                //sleep(1);
-                //_logger->error("Command executed!");
+                sleep(1);
+                _logger->error("Command executed!");
 
                 msg.append("\r\n");
 
@@ -273,8 +273,8 @@ void ServerImpl::OnCommand (int client_socket) {
     close(client_socket);
 
     // for debugging
-    //sleep(5);
-    //_logger->error("Work finished");
+    sleep(5);
+    _logger->error("Work finished");
 
     // inform server
     {

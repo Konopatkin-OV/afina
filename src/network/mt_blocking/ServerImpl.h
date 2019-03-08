@@ -2,8 +2,8 @@
 #define AFINA_NETWORK_MT_BLOCKING_SERVER_H
 
 #include <atomic>
-#include <mutex>
 #include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #include <afina/network/Server.h>
