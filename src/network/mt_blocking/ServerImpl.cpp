@@ -95,6 +95,14 @@ void ServerImpl::Stop() {
 
 // See Server.h
 void ServerImpl::Join() {
+    running.store(false);
+
+    //waiting for all workers to finish
+    std::unique_lock<std::mutex> _lock(_work_mutex);
+    while (_num_workers > 0) {
+        _all_finished.wait(_lock);
+    }
+
     assert(_thread.joinable());
     _thread.join();
     close(_server_socket);
@@ -178,7 +186,6 @@ void ServerImpl::OnCommand (int client_socket) {
     // - send response
     try {       
         while (running.load()) {
-            _logger->error("Try new read");
             int readed_bytes = -1;
             char client_buffer[4096];
             while ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
@@ -227,15 +234,8 @@ void ServerImpl::OnCommand (int client_socket) {
 
                     // Thre is command & argument - RUN!
                     if (command_to_execute && arg_remains == 0) {
-                        // for debugging
-                        _logger->debug("Start command execution");
-                        ////////////////
                         std::string result;
                         command_to_execute->Execute(*pStorage, argument_for_command, result);
-                        // for debugging
-                        sleep(0.1);
-                        _logger->error("Command executed!");
-                        ////////////////
 
                         // Send response
                         result += "\r\n";
@@ -262,10 +262,6 @@ void ServerImpl::OnCommand (int client_socket) {
     }
 
     close(client_socket);
-
-    // for debugging
-    sleep(5);
-    _logger->error("Work finished");
 
     // inform server
     {
