@@ -167,107 +167,98 @@ void ServerImpl::OnRun() {
 }
 
 void ServerImpl::OnCommand (int client_socket) {
-    const ssize_t buf_size = 1024;
-    char buf[buf_size];
-    ssize_t buf_read;
-    size_t buf_left = 0, buf_parsed = 0;
-    bool connected = true;
-
-    // some useful lambda, removes parsed characters from buffer
-    auto shift_buf = [&]() {
-        // strncpy and memcpy get undefined behaviour on overlapped ranges
-        // memcpy(buf, buf + buf_parsed, buf_left - buf_parsed);
-        if (buf_parsed > 0) {
-            char *to = buf, *from = buf + buf_parsed;
-            for (int i = 0; i < buf_left - buf_parsed; ++to, ++from, ++i) {
-                *to = *from;
-            }
-            buf_left -= buf_parsed;
-            buf_parsed = 0;
-            buf[buf_left] = '\0';
-        }
-    };
-    ///////////////////////////
-
+    std::size_t arg_remains;
     Protocol::Parser parser;
-    parser.Reset();
+    std::string argument_for_command;
+    std::unique_ptr<Execute::Command> command_to_execute;
 
-    while (connected && running.load()) {
-        buf_read = recv(client_socket, buf + buf_left, buf_size - buf_left, 0);
-        // if something went wrong - terminate
-        if (buf_read <= 0) {
-            connected = false;
-            break;
-        }
+    // Process connection:
+    // - read commands until socket alive
+    // - execute each command
+    // - send response
+    try {       
+        while (running.load()) {
+            _logger->error("Try new read");
+            int readed_bytes = -1;
+            char client_buffer[4096];
+            while ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
+                _logger->debug("Got {} bytes from socket", readed_bytes);
 
-        buf_left += buf_read;
-
-        shift_buf();
-
-        try {
-            while(buf_left > 0 && parser.Parse(buf, buf_left, buf_parsed)) {
-                shift_buf();
-
-                std::unique_ptr<Execute::Command> command(parser.Build(buf_parsed));
-
-                // +1 for '\0'
-                if (buf_left + buf_parsed + 1 > buf_size) {
-                    static const std::string msg = "Command size limit exceeded\r\n";
-                    if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                        _logger->error("Failed to write response to client: {}", strerror(errno));
-                    }
-                    connected = false;
-                } else {
-                    while (buf_left < buf_parsed) {
-                        buf_read = recv(client_socket, buf + buf_left, buf_parsed - buf_left, 0);
-                        if (buf_read <= 0) {
-                            connected = false;
-                            break;
+                // Single block of data readed from the socket could trigger inside actions a multiple times,
+                // for example:
+                // - read#0: [<command1 start>]
+                // - read#1: [<command1 end> <argument> <command2> <argument for command 2> <command3> ... ]
+                while (readed_bytes > 0) {
+                    _logger->debug("Process {} bytes", readed_bytes);
+                    // There is no command yet
+                    if (!command_to_execute) {
+                        std::size_t parsed = 0;
+                        if (parser.Parse(client_buffer, readed_bytes, parsed)) {
+                            // There is no command to be launched, continue to parse input stream
+                            // Here we are, current chunk finished some command, process it
+                            _logger->debug("Found new command: {} in {} bytes", parser.Name(), parsed);
+                            command_to_execute = parser.Build(arg_remains);
+                            if (arg_remains > 0) {
+                                arg_remains += 2;
+                            }
                         }
-                        buf_left += buf_read;
+
+                        // Parsed might fails to consume any bytes from input stream. In real life that could happens,
+                        // for example, because we are working with UTF-16 chars and only 1 byte left in stream
+                        if (parsed == 0) {
+                            break;
+                        } else {
+                            std::memmove(client_buffer, client_buffer + parsed, readed_bytes - parsed);
+                            readed_bytes -= parsed;
+                        }
                     }
-                }
-                if (!connected) {
-                    break;
-                }
 
+                    // There is command, but we still wait for argument to arrive...
+                    if (command_to_execute && arg_remains > 0) {
+                        _logger->debug("Fill argument: {} bytes of {}", readed_bytes, arg_remains);
+                        // There is some parsed command, and now we are reading argument
+                        std::size_t to_read = std::min(arg_remains, std::size_t(readed_bytes));
+                        argument_for_command.append(client_buffer, to_read);
 
-                char tmp = '\0';
-                std::swap(tmp, buf[buf_parsed]);
+                        std::memmove(client_buffer, client_buffer + to_read, readed_bytes - to_read);
+                        arg_remains -= to_read;
+                        readed_bytes -= to_read;
+                    }
 
-                std::string msg;
-                command->Execute(*pStorage, buf, msg);
+                    // Thre is command & argument - RUN!
+                    if (command_to_execute && arg_remains == 0) {
+                        // for debugging
+                        _logger->debug("Start command execution");
+                        ////////////////
+                        std::string result;
+                        command_to_execute->Execute(*pStorage, argument_for_command, result);
+                        // for debugging
+                        sleep(0.1);
+                        _logger->error("Command executed!");
+                        ////////////////
 
-                sleep(1);
-                _logger->error("Command executed!");
+                        // Send response
+                        result += "\r\n";
+                        if (send(client_socket, result.data(), result.size(), 0) <= 0) {
+                            throw std::runtime_error("Failed to send response");
+                        }
 
-                msg.append("\r\n");
-
-                buf[buf_parsed] = tmp;
-
-                shift_buf();
-
-                if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                    _logger->error("Failed to write response to client: {}", strerror(errno));
-                    connected = false;
-                    break;
-                }
-
-                parser.Reset();
+                        // Prepare for the next command
+                        command_to_execute.reset();
+                        argument_for_command.resize(0);
+                        parser.Reset();
+                    }
+                } // while (readed_bytes)
             }
-        } catch (std::runtime_error &err) {
-            std::string msg(err.what());
-            msg.append("\r\n");
-            if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                _logger->error("Failed to write response to client: {}", strerror(errno));
-            }
-            connected = false;
-            break;
-        }
 
-        if (buf_parsed > 0) {
-            shift_buf();
+            if (readed_bytes == 0) {
+                throw std::runtime_error("Connection closed");
+            } else {
+                throw std::runtime_error(std::string(strerror(errno)));
+            }
         }
+    } catch (std::runtime_error &ex) {
+        _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
 
     close(client_socket);
