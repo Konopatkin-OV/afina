@@ -74,8 +74,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
-    // min 2 threads, max 4 threads, 
-    // max 1 task in queue (to be able to check from only two terminals), 
+    // min 2 threads, max 4 threads,
+    // max 1 task in queue (to be able to check from only two terminals),
     // 5 seconds idle time
     _thread_pool.reset(new Afina::Concurrency::Executor(2, 4, 1, 5000));
     _thread_pool->Start();
@@ -87,8 +87,6 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 // See Server.h
 void ServerImpl::Stop() {
     _thread_pool->Stop();
-
-    sleep(3);
 
     running.store(false);
 
@@ -165,7 +163,7 @@ void ServerImpl::OnRun() {
     _logger->warn("Network stopped");
 }
 
-void ServerImpl::OnCommand (int client_socket) {
+void ServerImpl::OnCommand(int client_socket) {
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
@@ -175,7 +173,7 @@ void ServerImpl::OnCommand (int client_socket) {
     // - read commands until socket alive
     // - execute each command
     // - send response
-    try {       
+    try {
         while (running.load()) {
             int readed_bytes = -1;
             char client_buffer[4096];

@@ -1,6 +1,7 @@
 #ifndef AFINA_CONCURRENCY_EXECUTOR_H
 #define AFINA_CONCURRENCY_EXECUTOR_H
 
+#include <chrono>
 #include <condition_variable>
 #include <functional>
 #include <memory>
@@ -8,7 +9,6 @@
 #include <queue>
 #include <string>
 #include <thread>
-#include <chrono>
 
 // for debugging
 #include <iostream>
@@ -34,12 +34,10 @@ class Executor {
     };
 
 public:
-    Executor(int th_min, int th_max, int q_max, int wait_max) 
-        : threads(th_max), threads_finished(th_max), 
-          low_watermark(th_min), high_watermark(th_max), max_queue_size(q_max), idle_time(wait_max) {}
-    ~Executor() {
-        this->Stop();
-    }
+    Executor(int th_min, int th_max, int q_max, int wait_max)
+        : threads(th_max), threads_finished(th_max), low_watermark(th_min), high_watermark(th_max),
+          max_queue_size(q_max), idle_time(wait_max) {}
+    ~Executor() { this->Stop(true); }
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
@@ -67,22 +65,17 @@ public:
 
         {
             std::unique_lock<std::mutex> lock(this->state_mutex);
-            std::cerr << "Execute: accepting task" << std::endl;
             if (state != State::kRun) {
-                std::cerr << "Execute: thread pool is being stopped, denied" << std::endl;
                 return false;
             }
 
             if (tasks.size() >= max_queue_size) {
-                std::cerr << "Execute: queue limit exceeded, denied" << std::endl;
                 return false;
             }
 
             try_create_worker();
 
             // Enqueue new task
-            std::cerr << "Execute: task accepted" << std::endl;
-
             tasks.push_back(exec);
         }
         empty_condition.notify_one();
@@ -111,7 +104,6 @@ private:
      */
     void joiner();
 
-
     /**
      * Main function that all pool threads are running. It polls internal task queue and execute tasks
      */
@@ -134,7 +126,6 @@ private:
     std::vector<std::thread> threads;
     std::vector<bool> threads_finished;
 
-
     /**
      * Thread launched from Start which removes joinable workers from threads vector
      */
@@ -144,7 +135,6 @@ private:
      * Conditional variable to await new data in case of empty queue
      */
     std::condition_variable joinable_condition;
-
 
     /**
      * Task queue
