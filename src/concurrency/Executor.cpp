@@ -34,6 +34,9 @@ void Executor::Start() {
 void Executor::Stop(bool await) {
 	{
 		std::unique_lock<std::mutex> _lock(state_mutex);
+		if (state != State::kRun) {
+			return;
+		}
 		state = State::kStopping;
 	}
 

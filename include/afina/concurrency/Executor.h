@@ -33,7 +33,9 @@ public:
     Executor(int th_min, int th_max, int q_max, int wait_max) 
         : threads(th_max), threads_finished(th_max), 
           low_watermark(th_min), high_watermark(th_max), max_queue_size(q_max), idle_time(wait_max) {}
-    ~Executor();
+    ~Executor() {
+        this->Stop();
+    }
 
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
