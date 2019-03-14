@@ -74,8 +74,10 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
-    // min 2 threads, max 4 threads, max 5 tasks in queue, 5 seconds idle time
-    _thread_pool.reset(new Afina::Concurrency::Executor(2, 4, 5, 5000));
+    // min 2 threads, max 4 threads, 
+    // max 1 task in queue (to be able to check from only two terminals), 
+    // 5 seconds idle time
+    _thread_pool.reset(new Afina::Concurrency::Executor(2, 4, 1, 5000));
     _thread_pool->Start();
 
     running.store(true);
@@ -84,10 +86,11 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 
 // See Server.h
 void ServerImpl::Stop() {
-    running.store(false);
+    _thread_pool->Stop();
 
-    _thread_pool->Stop(true);
-    _thread_pool.reset();
+    sleep(3);
+
+    running.store(false);
 
     shutdown(_server_socket, SHUT_RDWR);
 }
@@ -97,6 +100,7 @@ void ServerImpl::Join() {
     running.store(false);
 
     _thread_pool->Stop(true);
+
     _thread_pool.reset();
 
     assert(_thread.joinable());
@@ -147,11 +151,13 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-        // Start new thread and process data from/to connection
-        {
-            {
-                _thread_pool->Execute(&ServerImpl::OnCommand, this, client_socket);
+        // Push connection processing task into thread pool
+        if (!_thread_pool->Execute(&ServerImpl::OnCommand, this, client_socket)) {
+            static const std::string msg = "Failed to accept task\r\n";
+            if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
+                _logger->error("Failed to send response to client: {}", strerror(errno));
             }
+            close(client_socket);
         }
     }
 

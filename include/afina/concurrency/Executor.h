@@ -10,6 +10,10 @@
 #include <thread>
 #include <chrono>
 
+// for debugging
+#include <iostream>
+#include <unistd.h>
+
 namespace Afina {
 namespace Concurrency {
 
@@ -63,17 +67,22 @@ public:
 
         {
             std::unique_lock<std::mutex> lock(this->state_mutex);
+            std::cerr << "Execute: accepting task" << std::endl;
             if (state != State::kRun) {
+                std::cerr << "Execute: thread pool is being stopped, denied" << std::endl;
                 return false;
             }
 
             if (tasks.size() >= max_queue_size) {
+                std::cerr << "Execute: queue limit exceeded, denied" << std::endl;
                 return false;
             }
 
             try_create_worker();
 
             // Enqueue new task
+            std::cerr << "Execute: task accepted" << std::endl;
+
             tasks.push_back(exec);
         }
         empty_condition.notify_one();
