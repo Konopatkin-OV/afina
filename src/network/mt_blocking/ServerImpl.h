@@ -7,6 +7,7 @@
 #include <thread>
 
 #include <afina/network/Server.h>
+#include <afina/concurrency/Executor.h>
 
 namespace spdlog {
 class logger;
@@ -57,14 +58,11 @@ private:
     // Thread to run network on
     std::thread _thread;
 
-    // Number of worker threads and mutex with condvar for access
-    int _num_workers;
-    std::mutex _work_mutex;
-    std::condition_variable _all_finished;
+    // Thread pool
+    std::unique_ptr<Afina::Concurrency::Executor> _thread_pool;
 
-    // max possible numbers of workers and acceptors
-    int _max_workers;
-    int _max_acceptors;
+    // Number of worker threads and mutex with condvar for access
+    std::mutex _work_mutex;
 };
 
 } // namespace MTblocking

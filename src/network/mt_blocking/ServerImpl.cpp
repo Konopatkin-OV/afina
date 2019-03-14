@@ -21,6 +21,8 @@
 #include <afina/execute/Command.h>
 #include <afina/logging/Service.h>
 
+#include <afina/concurrency/Executor.h>
+
 #include "protocol/Parser.h"
 
 namespace Afina {
@@ -72,9 +74,9 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
         throw std::runtime_error("Socket listen() failed");
     }
 
-    _num_workers = 0;
-    _max_workers = n_workers;
-    _max_acceptors = n_accept;
+    // min 2 threads, max 4 threads, max 5 tasks in queue, 5 seconds idle time
+    _thread_pool.reset(new Afina::Concurrency::Executor(2, 4, 5, 5000));
+    _thread_pool->Start();
 
     running.store(true);
     _thread = std::thread(&ServerImpl::OnRun, this);
@@ -84,11 +86,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 void ServerImpl::Stop() {
     running.store(false);
 
-    //waiting for all workers to finish
-    std::unique_lock<std::mutex> _lock(_work_mutex);
-    while (_num_workers > 0) {
-        _all_finished.wait(_lock);
-    }
+    _thread_pool->Stop(true);
+    _thread_pool.reset();
 
     shutdown(_server_socket, SHUT_RDWR);
 }
@@ -97,11 +96,8 @@ void ServerImpl::Stop() {
 void ServerImpl::Join() {
     running.store(false);
 
-    //waiting for all workers to finish
-    std::unique_lock<std::mutex> _lock(_work_mutex);
-    while (_num_workers > 0) {
-        _all_finished.wait(_lock);
-    }
+    _thread_pool->Stop(true);
+    _thread_pool.reset();
 
     assert(_thread.joinable());
     _thread.join();
@@ -154,18 +150,7 @@ void ServerImpl::OnRun() {
         // Start new thread and process data from/to connection
         {
             {
-                std::unique_lock<std::mutex> _lock(_work_mutex);
-                if (_num_workers == _max_workers) {
-                    static const std::string msg = "Connection limit exceeded\r\n";
-                    if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                        _logger->error("Failed to write response to client: {}", strerror(errno));
-                    }
-                    close(client_socket);
-                } else {
-                    _num_workers += 1;
-                    std::thread worker_thread(&ServerImpl::OnCommand, this, client_socket);
-                    worker_thread.detach();
-                }
+                _thread_pool->Execute(&ServerImpl::OnCommand, this, client_socket);
             }
         }
     }
@@ -262,13 +247,6 @@ void ServerImpl::OnCommand (int client_socket) {
     }
 
     close(client_socket);
-
-    // inform server
-    {
-        std::unique_lock<std::mutex> _lock(_work_mutex);
-        _num_workers -= 1;
-        _all_finished.notify_one();
-    }
 }
 
 } // namespace MTblocking

@@ -29,6 +29,7 @@ class Executor {
         kStopped
     };
 
+public:
     Executor(int th_min, int th_max, int q_max, int wait_max) 
         : threads(th_max), threads_finished(th_max), 
           low_watermark(th_min), high_watermark(th_max), max_queue_size(q_max), idle_time(wait_max) {}
