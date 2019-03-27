@@ -4,6 +4,26 @@
 namespace Afina {
 namespace Backend {
 
+bool SimpleLRU::ReplaceData(const std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>,
+                                           std::less<std::string>>::iterator node,
+                            const std::string &value) {
+    const std::string &key = node->first.get();
+    if (key.size() + value.size() > this->_max_size) {
+        return false;
+    }
+
+    this->MoveToHead(&(node->second.get()));
+    this->_cur_size += value.size() - node->second.get().value.size();
+
+    while (this->_cur_size > this->_max_size) {
+        this->RemoveTail();
+    }
+
+    node->second.get().value = value;
+
+    return true;
+}
+
 bool SimpleLRU::InsertHead(const std::string &key, const std::string &value) {
     if (key.size() + value.size() > this->_max_size) {
         return false;
@@ -87,9 +107,7 @@ bool SimpleLRU::Put(const std::string &key, const std::string &value) {
     if (found == this->_lru_index.end()) {
         return this->InsertHead(key, value);
     } else {
-        found->second.get().value = value;
-        this->MoveToHead(&(found->second.get()));
-        return true;
+        return this->ReplaceData(found, value);
     }
 }
 
@@ -111,9 +129,7 @@ bool SimpleLRU::Set(const std::string &key, const std::string &value) {
 
     // if elem in cache
     if (found != this->_lru_index.end()) {
-        found->second.get().value = value;
-        this->MoveToHead(&(found->second.get()));
-        return true;
+        return this->ReplaceData(found, value);
     } else {
         return false;
     }
