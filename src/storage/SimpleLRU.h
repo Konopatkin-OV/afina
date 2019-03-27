@@ -49,7 +49,7 @@ public:
 private:
     // LRU cache node
     using lru_node = struct lru_node {
-        std::string key;
+        const std::string key;
         std::string value;
         lru_node *prev;
         std::unique_ptr<lru_node> next;
@@ -82,6 +82,11 @@ private:
 
     // Moves node to start of the list
     void MoveToHead(lru_node *node);
+
+    // Replaces data in node with new
+    bool ReplaceData(const std::map<std::reference_wrapper<const std::string>, std::reference_wrapper<lru_node>,
+                                    std::less<std::string>>::iterator node,
+                     const std::string &value);
 };
 
 } // namespace Backend
