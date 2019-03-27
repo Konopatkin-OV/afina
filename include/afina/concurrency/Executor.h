@@ -35,8 +35,7 @@ class Executor {
 
 public:
     Executor(int th_min, int th_max, int q_max, int wait_max)
-        : threads(th_max), threads_finished(th_max), low_watermark(th_min), high_watermark(th_max),
-          max_queue_size(q_max), idle_time(wait_max) {}
+        : low_watermark(th_min), high_watermark(th_max), max_queue_size(q_max), idle_time(wait_max) {}
     ~Executor() { this->Stop(true); }
 
     /**
@@ -100,14 +99,9 @@ private:
     void try_create_worker();
 
     /**
-     * function for thread which joins idle workers
-     */
-    void joiner();
-
-    /**
      * Main function that all pool threads are running. It polls internal task queue and execute tasks
      */
-    friend void perform(Executor *executor, int thread_num);
+    friend void perform(Executor *executor);
 
     /**
      * Mutex to protect state below from concurrent modification
@@ -120,21 +114,9 @@ private:
     std::condition_variable empty_condition;
 
     /**
-     * Vector of actual threads that perorm execution
-     * must not change size because of mutexes
+     * Conditional variable to await all workers finish their tasks
      */
-    std::vector<std::thread> threads;
-    std::vector<bool> threads_finished;
-
-    /**
-     * Thread launched from Start which removes joinable workers from threads vector
-     */
-    std::thread joiner_thread;
-
-    /**
-     * Conditional variable to await new data in case of empty queue
-     */
-    std::condition_variable joinable_condition;
+    std::condition_variable finish_condition;
 
     /**
      * Task queue
@@ -149,7 +131,6 @@ private:
 
     // thread pool state variables
     int live_workers;
-    int unjoined_workers;
     int free_workers;
 
     /**
