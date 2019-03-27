@@ -84,12 +84,6 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
 void ServerImpl::Stop() {
     running.store(false);
 
-    //waiting for all workers to finish
-    std::unique_lock<std::mutex> _lock(_work_mutex);
-    while (_num_workers > 0) {
-        _all_finished.wait(_lock);
-    }
-
     shutdown(_server_socket, SHUT_RDWR);
 }
 
@@ -156,10 +150,6 @@ void ServerImpl::OnRun() {
             {
                 std::unique_lock<std::mutex> _lock(_work_mutex);
                 if (_num_workers == _max_workers) {
-                    static const std::string msg = "Connection limit exceeded\r\n";
-                    if (send(client_socket, msg.data(), msg.size(), 0) <= 0) {
-                        _logger->error("Failed to write response to client: {}", strerror(errno));
-                    }
                     close(client_socket);
                 } else {
                     _num_workers += 1;
@@ -267,7 +257,9 @@ void ServerImpl::OnCommand (int client_socket) {
     {
         std::unique_lock<std::mutex> _lock(_work_mutex);
         _num_workers -= 1;
-        _all_finished.notify_one();
+        if (_num_workers == 0) {
+            _all_finished.notify_one();
+        }
     }
 }
 
